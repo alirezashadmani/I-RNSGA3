@@ -1,6 +1,6 @@
 # download spanish to english data
 
-import os, unicodedata, re, io
+import os, unicodedata, re, io, time
 import tensorflow as tf
 
 path_to_zip = tf.keras.utils.get_file(
@@ -116,6 +116,95 @@ class Decoder(tf.keras.Model):
 loss_object = tf.keras.losses.SparseCategoricalCrossentropy(from_logits = True, reduction = 'none')
 
 def loss_function(real, pred):
-    
+
     loss_ = loss_object(real, pred)
     return tf.reduce_mean(loss_)
+
+
+optimizer = tf.keras.optimizers.Adam()
+
+def get_train_step_function():
+
+    @tf.function
+    def train_step(inp, targ, enc_hidden, encoder, decoder):
+
+        loss = 0
+
+        with tf.GradientTape() as tape:
+            enc_output, enc_hidden = encoder(inp, enc_hidden)
+
+            dec_hidden = enc_hidden
+            
+            dec_input = tf.expand_dims([targ_lang.word_index['<start>']] * BATCH_SIZE, 1)
+
+            for t in range(1, targ.shape[1]):
+                predictions, dec_hidden, _ = decoder(dec_input, dec_hidden, enc_output)
+                loss += loss_function(targ[:, t], predictions)
+                dec_output = tf.expand_dims(targ[:, t], 1)
+
+        batch_loss = (loss / int(targ.shape[1]))
+        variables = encoder.trainable_variables + decoder.trainable_variables
+        gradients = tape.gradient(loss, variables)
+        optimizer.apply_gradients(zip(gradients, variables))
+
+        return batch_loss
+    return train_step
+
+def calculate_validation_loss(inp, targ, enc_hidden, encoder, decoder):
+
+    loss = 0
+    enc_output, enc_hidden = encoder(inp, enc_hidden)
+    dec_hidden = enc_hidden
+    dec_input = tf.expand_dims([targ_lang.word_index['<start>']] * BATCH_SIZE, 1)
+
+    for t in range(1, targ.shape[1]):
+        predictions, dec_hidden, _ = decoder(dec_input, dec_hidden, enc_output)
+        loss += loss_function(targ[:, t], predictions)
+        dec_input = tf.expand_dims(targ[:, t], 1)
+
+    loss = loss / int(targ.shape[1])
+    
+    return loss
+
+def training_seq2seq(epochs):
+
+    encoder = Encoder(vocab_inp_size, embedding_dim, units, BATCH_SIZE)
+    decoder = Decoder(vocab_tar_size, embedding_dim, units, BATCH_SIZE)
+    train_step_func = get_train_step_function()
+    training_loss = []
+    validation_loss = []
+
+    for epoch in range(epochs):
+        start = time.time()
+        enc_hidden = encoder.initialize_hidden_state()
+        total_loss = 0
+
+        for (batch, (inp, targ)) in enumerate(dataset.take(steps_per_epoch)):
+            batch_loss = train_step_func(inp,
+                                         targ,
+                                         enc_hidden,
+                                         encoder,
+                                         decoder)
+            total_loss += batch_loss
+
+            if batch % 100 == 0:
+                print('Epoch {} Batch {} Loss {:.4f}'.format(epoch + 1, batch, batch_loss))
+
+        enc_hidden = encoder.initialize_hidden_state()
+        total_val_loss = 0
+
+        for (batch, (inp, targ)) in enumerate(validation_dataset.take(steps_per_epoch_val)):
+            val_loss = calculate_validation_loss(inp,
+                                                 targ,
+                                                 enc_hidden,
+                                                 encoder,
+                                                 decoder)
+            total_val_loss += val_loss
+
+        training_loss.append(total_loss / steps_per_epoch)
+        validation_loss.append(total_val_loss / steps_per_epoch_val)
+
+        print('Epoch {} Loss {:.4f} Validation Loss {:.4f}'.format(epoch + 1, training_loss[-1], validation_loss[-1]))
+        print('Time taken for 1 epoch {} sec\n'.format(time.time() - start))
+
+    return encoder, decoder, training_loss, validation_loss
