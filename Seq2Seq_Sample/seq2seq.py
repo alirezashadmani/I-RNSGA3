@@ -1,7 +1,19 @@
-# download spanish to english data
-
-import os, unicodedata, re, io, time
+##################### Import Libraries #####################
 import tensorflow as tf
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+from sklearn.model_selection import train_test_split
+
+import unicodedata, re, os, io, time
+import numpy as np
+
+##################### Download & Load Dataset #####################
+
+# Clean sentence by removing special characters
+# Add a start and end token to each sentence
+# Create a word index and reverse word index
+# Pad each sentence to a maximum length
+
 
 path_to_zip = tf.keras.utils.get_file(
     'spa-eng.zip', origin = 'http://storage.googleapis.com/download.tensorflow.org/data/spa-eng.zip',
@@ -9,6 +21,8 @@ path_to_zip = tf.keras.utils.get_file(
 )
 
 path_to_file = os.path.dirname(path_to_zip) + '/spa-eng/spa.txt'
+
+##################### Pre-processing #####################
 
 # convert unicode files to ascii
 
@@ -41,6 +55,8 @@ def create_dataset(path, num_examples):
 
     return zip(*word_pairs)
 
+en, sp = create_dataset(path_to_file, None)
+
 # tokenize the sentence and pad the sequence to the same length
 def tokenize(lang):
 
@@ -57,6 +73,42 @@ def load_dataset(path, num_examples = None):
     target_tensor, targ_lang_tokenizer = tokenize(targ_lang)
     return input_tensor, target_tensor, inp_lang_tokenizer, targ_lang_tokenizer
 
+num_example = 30000
+input_tensor, target_tensor, inp_lang, targ_lang = load_dataset(path_to_file, num_example)
+
+# Calculate the max_length of the target tensors
+max_length_targ, max_length_inp = target_tensor.shape[1], input_tensor.shape[1]
+
+#  Creating training and validation sets using an 80 - 20 split
+
+input_tensor_train, input_tensor_val, target_tensor_train, target_tensor_val = train_test_split(input_tensor,
+                                                                                                target_tensor,
+                                                                                                test_size = 0.2)
+##################### Create a tf.data dataset #####################
+
+# Create a source dataset from your input data
+# Apply dataset transformations to preprocess the data
+# Iterate over the dataset and process the elements
+# Iteration occurs in streaming fashion, so the full dataset does not need to fit into memory
+
+# Configuration
+BUFFER_SIZE = len(input_tensor_train)
+BATCH_SIZE = 64
+steps_per_epoch = len(input_tensor_train) // BATCH_SIZE
+steps_per_epoch_val = len(input_tensor_val) // BATCH_SIZE
+embedding_dim = 256 # for word embeddings
+units = 1024 # dimensionality of the output space of the RNN
+vocab_inp_size = len(inp_lang.word_index) + 1
+vocab_tar_size = len(targ_lang.word_index) + 1
+
+dataset = tf.dataset.Dataset.from_tensor_slices((input_tensor_train, target_tensor_train)).shuffle(BUFFER_SIZE)
+dataset = dataset.batch(BATCH_SIZE, drop_remainder = True)
+validation_dataset = tf.data.Dataset.from_tensor_slices((input_tensor_val, target_tensor_val)).shuffle(BUFFER_SIZE)
+validation_dataset = validation_dataset.batch(BATCH_SIZE, drop_remainder = True)
+
+example_input_batch, example_target_batch = next(iter(dataset))
+
+##################### Creating Basic Seq2Seq Model #####################
 
 class Encoder(tf.keras.Model):
 
@@ -112,6 +164,37 @@ class Decoder(tf.keras.Model):
         x = self.fc(output)
 
         return x, state
+    
+##################### Dot Product Attention #####################
+
+class DotProductAttention(tf.keras.layers.Layer):
+
+    def __init__(self, units):
+
+        super(DotProductAttention, self).__init__()
+        self.WK = tf.keras.layers.Dense(units)
+        self.WQ = tf.keras.layers.Dense(units)
+
+    def call(self, query, values):
+        # query --> s
+        #values --> h1 ... hm
+        query_with_time_axis = tf.expand_dims(query, 1)
+
+        K = self.WK(values)
+        Q = self.WQ(query_with_time_axis)
+        QT = tf.einsum('ijk->ikj', Q)
+        score = tf.matmul(K, QT)
+
+        attention_weights = tf.nn.softmax(score, axis = 1)
+
+        context_vector = attention_weights * values
+        context_vector = tf.reduce_sum(context_vector, axis = 1)
+
+        return context_vector, attention_weights
+    
+##################### Additive Attention #####################
+
+
     
 loss_object = tf.keras.losses.SparseCategoricalCrossentropy(from_logits = True, reduction = 'none')
 
@@ -208,3 +291,6 @@ def training_seq2seq(epochs):
         print('Time taken for 1 epoch {} sec\n'.format(time.time() - start))
 
     return encoder, decoder, training_loss, validation_loss
+
+
+
