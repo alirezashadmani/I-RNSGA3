@@ -50,7 +50,7 @@ def preprocess_sentence(w):
 
 def create_dataset(path, num_examples):
 
-    lines = io.open(path, encoding = 'UTF-8'.read().strip().split('\n'))
+    lines = io.open(path, encoding = 'UTF-8').read().strip().split('\n')
     word_pairs = [[preprocess_sentence(w) for w in l.split('\t')] for l in lines[:num_examples]]
 
     return zip(*word_pairs)
@@ -60,10 +60,10 @@ en, sp = create_dataset(path_to_file, None)
 # tokenize the sentence and pad the sequence to the same length
 def tokenize(lang):
 
-    lang_tokenizer = tf.keras.preprocessing.text.Tokenizer(filter = '')
+    lang_tokenizer = tf.keras.preprocessing.text.Tokenizer(filters = '')
     lang_tokenizer.fit_on_texts(lang)
     tensor = lang_tokenizer.texts_to_sequences(lang)
-    tensor = tf.keras.preprocesing.sequence.pad_sequences(tensor, padding = 'post')
+    tensor = tf.keras.preprocessing.sequence.pad_sequences(tensor, padding = 'post')
     return tensor, lang_tokenizer
 
 def load_dataset(path, num_examples = None):
@@ -101,7 +101,7 @@ units = 1024 # dimensionality of the output space of the RNN
 vocab_inp_size = len(inp_lang.word_index) + 1
 vocab_tar_size = len(targ_lang.word_index) + 1
 
-dataset = tf.dataset.Dataset.from_tensor_slices((input_tensor_train, target_tensor_train)).shuffle(BUFFER_SIZE)
+dataset = tf.data.Dataset.from_tensor_slices((input_tensor_train, target_tensor_train)).shuffle(BUFFER_SIZE)
 dataset = dataset.batch(BATCH_SIZE, drop_remainder = True)
 validation_dataset = tf.data.Dataset.from_tensor_slices((input_tensor_val, target_tensor_val)).shuffle(BUFFER_SIZE)
 validation_dataset = validation_dataset.batch(BATCH_SIZE, drop_remainder = True)
@@ -117,9 +117,9 @@ class Encoder(tf.keras.Model):
         super(Encoder, self).__init__()
         self.batch_sz = batch_sz
         self.enc_units = enc_units
-        self.embedding = tf.keras_layers.Embedding(vocab_size, embedding_dim)
+        self.embedding = tf.keras.layers.Embedding(vocab_size, embedding_dim)
         self.gru = tf.keras.layers.GRU(self.enc_units,
-                                       return_sequence = True,  # Whether to return the last output in the output sequence, or the full sequence.
+                                       return_sequences = True,  # Whether to return the last output in the output sequence, or the full sequence.
                                        return_state = True, # Whether to return the last state in addition to the output.
                                        recurrent_initializer = 'glorot_uniform')
         
@@ -144,7 +144,7 @@ class Decoder(tf.keras.Model):
         self.dec_units = dec_units
         self.embedding = tf.keras.layers.Embedding(vocab_size, embedding_dim)
         self.gru = tf.keras.layers.GRU(self.dec_units,
-                                       return_sequence = True,
+                                       return_sequences = True,
                                        return_state = True,
                                        recurrent_initializer = 'glorot_uniform')
         self.fc = tf.keras.layers.Dense(vocab_size)
@@ -226,7 +226,10 @@ class DecoderWithAttention(tf.keras.Model):
         self.batch_sz = batch_sz
         self.dec_units = dec_units
         self.embedding = tf.keras.layers.Embedding(vocab_size, embedding_dim)
-        self.gru = tf.keras.layers.GRU(self.dec_units, return_sequence = True, return_state = True, recurrent_initializer = 'glorot_uniform')
+        self.gru = tf.keras.layers.GRU(self.dec_units,
+                                       return_sequences = True,
+                                       return_state = True,
+                                       recurrent_initializer = 'glorot_uniform')
         self.fc = tf.keras.layers.Dense(vocab_size)
         self.attention = attention
 
@@ -299,10 +302,10 @@ def calculate_validation_loss(inp, targ, enc_hidden, encoder, decoder):
     
     return loss
 
-def training_seq2seq(epochs):
+def training_seq2seq(epochs, attention):
 
     encoder = Encoder(vocab_inp_size, embedding_dim, units, BATCH_SIZE)
-    decoder = Decoder(vocab_tar_size, embedding_dim, units, BATCH_SIZE)
+    decoder = DecoderWithAttention(vocab_tar_size, embedding_dim, units, BATCH_SIZE, attention)
     train_step_func = get_train_step_function()
     training_loss = []
     validation_loss = []
