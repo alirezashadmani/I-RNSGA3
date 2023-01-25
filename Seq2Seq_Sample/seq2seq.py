@@ -194,8 +194,57 @@ class DotProductAttention(tf.keras.layers.Layer):
     
 ##################### Additive Attention #####################
 
+class AdditiveAttention(tf.keras.layers.Layer):
 
+    def __init__(self, units):
+
+        super(AdditiveAttention, self).__init__()
+        self.W1 = tf.keras.layers.Dense(units)
+        self.W2 = tf.keras.layers.Dense(units)
+        self.V = tf.keras.layers.Dense(1)
+
+    def call(self, query, values):
+
+        query_with_time_axis = tf.expand_dims(query, 1)
+
+        score = self.V(tf.nn.tanh(self.W1(values) + self.W2(query_with_time_axis)))
+
+        attention_weights = tf.nn.softmax(score, axis = 1)
+
+        context_vector = attention_weights * values
+        context_vector = tf.reducesum(context_vector, axis = 1)
+
+        return context_vector, attention_weights
     
+##################### Decoder with Attention #####################
+
+class DecoderWithAttention(tf.keras.Model):
+
+    def __init__(self, vocab_size, embedding_dim, dec_units, batch_sz, attention = None):
+
+        super(DecoderWithAttention, self).__init__()
+        self.batch_sz = batch_sz
+        self.dec_units = dec_units
+        self.embedding = tf.keras.layers.Embedding(vocab_size, embedding_dim)
+        self.gru = tf.keras.layers.GRU(self.dec_units, return_sequence = True, return_state = True, recurrent_initializer = 'glorot_uniform')
+        self.fc = tf.keras.layers.Dense(vocab_size)
+        self.attention = attention
+
+    def call(self, x, hidden, enc_output):
+        
+        x = self.embedding(x)
+        attention_weights = None
+
+        if self.attention:
+            context_vector, attention_weights = self.attention(hidden, enc_output)
+            x = tf.concat([tf.expand_dims(context_vector, 1), x], axis = -1)
+
+        output, state = self.gru(x, initial_state = hidden)
+        output = tf.reshape(output, (-1, output.shape[2]))
+        x = self.fc(output)
+
+##################### Loss Function #####################
+
 loss_object = tf.keras.losses.SparseCategoricalCrossentropy(from_logits = True, reduction = 'none')
 
 def loss_function(real, pred):
@@ -203,6 +252,7 @@ def loss_function(real, pred):
     loss_ = loss_object(real, pred)
     return tf.reduce_mean(loss_)
 
+##################### Training #####################
 
 optimizer = tf.keras.optimizers.Adam()
 
@@ -292,5 +342,10 @@ def training_seq2seq(epochs):
 
     return encoder, decoder, training_loss, validation_loss
 
+epochs = 20
+attention = None
+print('Running seq2seq model without attention')
+encoder, decoder, training_loss, validation_loss = training_seq2seq(epochs, attention)
 
-
+tloss = training_loss
+vloss = validation_loss
